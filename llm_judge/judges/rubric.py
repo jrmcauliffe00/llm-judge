@@ -22,6 +22,7 @@ from ..config import Config, default_config
 from ..dataset import TestCase
 from ..models import LLMClient, build_client
 from ..results import Attribution, CriterionScore, JudgeResult
+from ..rubric import Rubric
 from ..schema import Message, ModelSpec, Role, Trace
 from .base import Criterion, Judge
 
@@ -149,19 +150,33 @@ class RubricJudge(Judge):
     def __init__(
         self,
         criteria: Optional[list[Criterion]] = None,
+        rubric: Optional[Rubric] = None,
         client: Optional[LLMClient] = None,
         judge_model: Optional[ModelSpec] = None,
         config: Optional[Config] = None,
     ) -> None:
-        super().__init__(criteria or list(DEFAULT_CRITERIA))
+        if rubric is not None:
+            self.rubric = rubric
+            super().__init__(rubric.criteria or list(DEFAULT_CRITERIA))
+        else:
+            self.rubric = Rubric(criteria=list(criteria)) if criteria else None
+            super().__init__(criteria or list(DEFAULT_CRITERIA))
         self.config = config or default_config
         self.judge_model = judge_model or ModelSpec(
             name=self.config.judge_model, provider=self.config.judge_provider
         )
         self.client = client or build_client(self.judge_model, self.config)
 
+    def criteria_for(self, case: Optional[TestCase] = None) -> list[Criterion]:
+        if self.rubric is not None:
+            found = self.rubric.for_case(case.id if case else None)
+            if found:
+                return found
+        return list(self.criteria) or list(DEFAULT_CRITERIA)
+
     def judge(self, trace: Trace, case: Optional[TestCase] = None) -> JudgeResult:
-        user_prompt = _build_user_prompt(trace, case, self.criteria)
+        criteria = self.criteria_for(case)
+        user_prompt = _build_user_prompt(trace, case, criteria)
         messages = [
             Message(role=Role.SYSTEM, content=_JUDGE_SYSTEM),
             Message(role=Role.USER, content=user_prompt),
@@ -169,7 +184,7 @@ class RubricJudge(Judge):
         response = self.client.complete(messages, temperature=0.0, json_mode=True)
         parsed = _extract_json(response.text)
 
-        scores = self._parse_scores(parsed)
+        scores = self._parse_scores(parsed, criteria)
         summary = ""
         if parsed and isinstance(parsed.get("summary"), str):
             summary = parsed["summary"]
@@ -178,7 +193,7 @@ class RubricJudge(Judge):
                 "Judge returned no parseable scores (offline mock or malformed "
                 "output); recorded neutral scores."
             )
-            scores = self._neutral_scores()
+            scores = self._neutral_scores(criteria)
 
         return self._finalize(
             trace,
@@ -189,13 +204,17 @@ class RubricJudge(Judge):
         )
 
     # --- helpers -------------------------------------------------------------
-    def _crit_by_name(self, name: str) -> Optional[Criterion]:
-        for c in self.criteria:
+    def _crit_by_name(
+        self, name: str, criteria: list[Criterion]
+    ) -> Optional[Criterion]:
+        for c in criteria:
             if c.name == name:
                 return c
         return None
 
-    def _parse_scores(self, parsed: Optional[dict]) -> list[CriterionScore]:
+    def _parse_scores(
+        self, parsed: Optional[dict], criteria: list[Criterion]
+    ) -> list[CriterionScore]:
         if not parsed or not isinstance(parsed.get("scores"), list):
             return []
         out: list[CriterionScore] = []
@@ -203,7 +222,7 @@ class RubricJudge(Judge):
             if not isinstance(item, dict) or "name" not in item:
                 continue
             name = str(item["name"])
-            crit = self._crit_by_name(name)
+            crit = self._crit_by_name(name, criteria)
             weight = crit.weight if crit else 1.0
             threshold = crit.pass_threshold if crit else 0.5
             raw_score = item.get("score", 3)
@@ -225,13 +244,13 @@ class RubricJudge(Judge):
             )
         return out
 
-    def _neutral_scores(self) -> list[CriterionScore]:
+    def _neutral_scores(self, criteria: list[Criterion]) -> list[CriterionScore]:
         return [
             CriterionScore(
                 name=c.name, score=0.5, passed=None, weight=c.weight,
                 rationale="No judge signal (offline).",
             )
-            for c in self.criteria
+            for c in criteria
         ]
 
 

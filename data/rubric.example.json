@@ -1,0 +1,16 @@
+{
+  "criteria": [
+    {
+      "name": "task",
+      "description": "Did it actually do the job this agent exists for?",
+      "weight": 1.0,
+      "pass_threshold": 0.5
+    },
+    {
+      "name": "grounding",
+      "description": "Did it only use the context it was given?",
+      "weight": 1.5,
+      "pass_threshold": 0.5
+    }
+  ]
+}

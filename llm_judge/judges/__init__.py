@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..config import Config, default_config
+from ..rubric import Rubric
 from .base import Criterion, Judge
 from .heuristic import HeuristicJudge
 from .rubric import DEFAULT_CRITERIA, RubricJudge
@@ -29,12 +30,16 @@ __all__ = [
 ]
 
 
-def build_judge(name: str, config: Optional[Config] = None) -> Judge:
+def build_judge(
+    name: str,
+    config: Optional[Config] = None,
+    rubric: Optional[Rubric] = None,
+) -> Judge:
     """Factory used by the CLI. ``name`` is 'heuristic' or 'rubric'."""
     config = config or default_config
     name = name.lower()
     if name in ("heuristic", "offline"):
         return HeuristicJudge()
     if name in ("rubric", "llm", "llm-as-a-judge"):
-        return RubricJudge(config=config)
+        return RubricJudge(rubric=rubric, config=config)
     raise ValueError(f"Unknown judge '{name}'. Use 'heuristic' or 'rubric'.")

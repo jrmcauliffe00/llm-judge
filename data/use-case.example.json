@@ -1,0 +1,11 @@
+{
+  "id": "hamlet-author",
+  "criteria": [
+    {
+      "name": "author",
+      "description": "The answer must name William Shakespeare.",
+      "weight": 1.0,
+      "pass_threshold": 0.5
+    }
+  ]
+}

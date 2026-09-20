@@ -23,6 +23,11 @@ traces/
 report.md
 report.json
 
+# Unique per-use-case rubric rules (local). Same shape as data/use-case.example.json
+# The CLI writes these: llm-judge rubric add --case CASE_ID --name ... --description '...'
+**/use-cases/*
+!**/use-cases/.gitkeep
+
 # Env / secrets
 .env
 .env.*

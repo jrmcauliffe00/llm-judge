@@ -23,6 +23,7 @@ from .benchmark import build_report, run_benchmark
 from .config import Config, default_config
 from .dataset import Dataset, TestCase
 from .judges import Criterion, HeuristicJudge, Judge, RubricJudge, build_judge
+from .rubric import Rubric, UseCaseRubric
 from .recommend import attribution_breakdown, recommend
 from .report import render, render_json, render_markdown, render_text
 from .results import (
@@ -79,6 +80,8 @@ __all__ = [
     "Criterion",
     "HeuristicJudge",
     "RubricJudge",
+    "Rubric",
+    "UseCaseRubric",
     "build_judge",
     # results
     "Attribution",

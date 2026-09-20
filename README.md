@@ -1,113 +1,174 @@
 # llm-judge
 
-An easy, **CLI-first** harness for benchmarking your LLM/agent output — and getting
-back concrete recommendations that tell you *what to fix*: your **runtime retrieval /
-context**, or your **static prompts**.
+Tell the judge **what your agent is supposed to do**. Give it an **`{expected}`**
+answer. It looks at the real output and says **which input to change** so the
+next run is closer to `{expected}`.
 
-Inspired by [JudgeZoo](https://github.com/LLM-QC/judgezoo) (standardized safety judges)
-and [NVIDIA NeMo's LLM-as-a-judge](https://docs.nvidia.com/nemo/microservices/latest/evaluator/metrics/llm-as-a-judge.html)
-(rubric-based grading), but focused on **local, iterative benchmarking of your own
-system** and on **attributing failures to a fixable lever**.
+That is the whole point of this repo.
 
-## Why
+## The two things you write
 
-Before you can improve an LLM system you have to *see* it completely. `llm-judge`
-captures a full **trace** of every run and then judges it:
+| You write | How often it changes | What it is |
+| --- | --- | --- |
+| **Process** | Once per project / agent | What this LLM is supposed to do. This is what the judge looks for. |
+| **`{expected}`** | Per use case, whenever you want | A gold answer for this question. Unstructured prose is fine. Rewrite it anytime. |
 
-| What you wanted to capture | Where it lives |
-| --- | --- |
-| The model you're using/testing (and settings) | `Trace.model` / `Step.model` (`ModelSpec`) |
-| The complete context window at start | `Trace.initial_context` |
-| The input at *every step* of a looping agent | `Step.input_messages` per `Step` |
-| Context manipulation / state in↔out (LangGraph-style) | `Step.state_before` / `Step.state_after` |
-| What the LLM spits out | `Step.output_messages`, `Trace.final_output` |
-| Static prompts (separate from runtime input) | `Trace.static_prompts`, `Step.static_prompt` |
-| Runtime-retrieved context (RAG) | `Step.retrieved_context` (`RetrievedChunk`) |
+Different projects → different process. Different questions → different `{expected}`.
 
-Because static prompts and retrieved context are tracked **separately**, the judge
-can attribute each failure to `retrieval`, `static_prompt`, `model`, or `input`, and
-the recommender turns those attributions into a ranked to-do list.
+`{expected}` lives in the dataset as `reference`.
 
-The judge is **model-aware**: it's told which model produced the answer, so it can
-distinguish "the model is too weak for this" from "the prompt/context is wrong."
+## The loop
+
+1. Write the process for this agent (`llm-judge rubric`).
+2. Write `{expected}` for a question (messy is OK).
+3. Run. The judge compares output to `{expected}` using your process.
+4. Read the report: change the **prompt**, the **retrieved context**, the **question**, or the **model**.
+5. If `{expected}` was wrong, rewrite it. Run again.
 
 ## Install
 
 ```bash
-pip install -e .            # core (offline: mock models + heuristic judge)
-pip install -e ".[all]"     # + openai client and YAML dataset support
+pip install -e .            # offline: mock models + heuristic judge
+pip install -e ".[all]"     # + OpenAI, Anthropic, YAML datasets
 ```
 
-Requires Python 3.10+. The only hard dependency is `pydantic`.
+Python 3.10+. The only hard dependency is `pydantic`.
 
-## Quick start (CLI)
+## Happy path (CLI)
 
 ```bash
-# 1) Create a starter dataset
+# Dataset of questions + {expected} answers
 llm-judge init data/example.jsonl
 
-# 2) Run fully offline (mock/echo target + heuristic judge — no API keys)
-llm-judge run --dataset data/example.jsonl
+# Project process — what THIS agent is supposed to do
+llm-judge rubric init
+llm-judge rubric add --name task --description "Did it actually do the job?"
+llm-judge rubric add --name grounding --description "Did it only use the given context?"
 
-# 3) Benchmark a real model, judged by an LLM-as-a-judge
-export OPENAI_API_KEY=...
-llm-judge run --dataset data/example.jsonl \
-    --target-model gpt-4o-mini --target-provider openai \
-    --judge rubric --judge-model gpt-4o --judge-provider openai \
-    --format markdown --out report.md
+# Extra rules for one use case (local file, not committed)
+llm-judge rubric add --case hamlet-author --name author --description "Must name Shakespeare"
 
-# CI gate: fail the build if pass rate drops
-llm-judge run --dataset data/example.jsonl --fail-under 0.8
+# Run. --rubric also picks up data/use-cases/*.json
+llm-judge run --dataset data/example.jsonl --rubric data/rubric.json
 ```
 
-Point `--target-provider`/`--judge-provider` at any OpenAI-compatible server
-(vLLM, Ollama, LM Studio) by setting `LLM_JUDGE_BASE_URL`.
+That is the whole flow. The CLI is the wrapper so every rubric file looks the same.
 
-Example report:
+## Where the rules live
+
+| File | Committed? | What it is |
+| --- | --- | --- |
+| `data/rubric.json` | Yes, if you want to share the project process | Shared “what this agent does” |
+| `data/use-cases/<id>.json` | **No** (gitignored) | Unique rules for one use case |
+| `data/rubric.example.json` | Yes | The project file shape |
+| `data/use-case.example.json` | Yes | The use-case file shape |
+
+Use-case files are yours. They stay local. The CLI always writes this shape:
+
+```json
+{
+  "id": "hamlet-author",
+  "criteria": [
+    {
+      "name": "author",
+      "description": "The answer must name William Shakespeare.",
+      "weight": 1.0,
+      "pass_threshold": 0.5
+    }
+  ]
+}
+```
+
+Do not invent a format. `llm-judge rubric add --case …` writes that file.
+
+```bash
+llm-judge rubric list
+llm-judge rubric add --name task --description "Updated wording"
+llm-judge rubric remove --name author --case hamlet-author
+```
+
+`--system-prompt` on `run` is the **agent’s** prompt (one input you might change).
+It is not the process. The process is the rubric.
+
+## `{expected}` is just a field
+
+One line of JSONL:
+
+```json
+{"input": "Who wrote Hamlet?", "reference": "William Shakespeare wrote Hamlet."}
+```
+
+- `input` — the question you send the agent
+- `reference` — `{expected}`. A sentence, a paragraph, a list of facts. Not a regex.
+- `context` — optional. The docs you retrieved. Include this if you want the judge to blame retrieval vs. the prompt.
+
+Hate that `{expected}`? Change `reference` and rerun.
+
+## What you get back
 
 ```
-================================================================
-BENCHMARK: example
-================================================================
-Target model : mock/echo
-Judge        : heuristic
-
-Cases        : 4    Passed: 1    Pass rate: 25%
-Overall score: 0.412  ████████░░░░░░░░░░░░
-
-Per-criterion averages
-----------------------------------------------------------------
-  faithfulness     0.180  ███░░░░░░░░░░░░░░░░░░
-  completeness     0.350  ███████░░░░░░░░░░░░░░
-  relevance        0.720  ██████████████░░░░░░
-
-Failure attribution (count of failed criteria)
-----------------------------------------------------------------
-  retrieval        3
-  static_prompt    2
-
 Recommendations (highest impact first)
 ----------------------------------------------------------------
 1. [retrieval] severity=0.61
-   Finding : 'faithfulness' failed in 3/4 cases (75%), attributed to retrieval.
+   Finding : 'faithfulness' failed in 3/4 cases.
    Fix     : Answers aren't grounded in the retrieved context. Improve retrieval...
 ```
 
-## Quick start (Python)
+| It says | Change this |
+| --- | --- |
+| `retrieval` | the docs / chunks you inject at runtime |
+| `static_prompt` | the fixed instructions for this agent |
+| `input` | the question itself |
+| `model` | which model or settings you used |
 
-```python
-from llm_judge import Dataset, EchoTarget, HeuristicJudge, run_benchmark, render
+## Cheap run (no custom process)
 
-ds = Dataset.load("data/example.jsonl")
-report = run_benchmark(EchoTarget(), HeuristicJudge(), ds)
-print(render(report))
+Skip the rubric. The heuristic judge just compares output to `{expected}`:
+
+```bash
+llm-judge run --dataset data/example.jsonl
 ```
 
-### Benchmark your own system
+Real model as the agent:
 
-Wrap any callable as a `Target`. For agentic/LangGraph loops, use `TraceRecorder`
-to capture every step and state transition — see
-[`examples/agentic_pipeline.py`](examples/agentic_pipeline.py):
+```bash
+export OPENAI_API_KEY=...
+llm-judge run --dataset data/example.jsonl --rubric data/rubric.json \
+    --target-model gpt-4o-mini --target-provider openai \
+    --system-prompt "Answer in one sentence from the given context." \
+    --judge-model gpt-4o --judge-provider openai
+```
+
+## Python
+
+Same two objects: a process (`Rubric` / `Criterion`) and a dataset of `{expected}`.
+
+```python
+from llm_judge import (
+    Criterion,
+    Dataset,
+    Rubric,
+    RubricJudge,
+    FunctionTarget,
+    run_benchmark,
+    render,
+)
+
+process = Rubric(criteria=[
+    Criterion(name="task", description="Did it actually do the job?"),
+])
+ds = Dataset.load("data/example.jsonl")
+
+def my_agent(case):
+    return "William Shakespeare wrote Hamlet."
+
+print(render(run_benchmark(FunctionTarget(my_agent), RubricJudge(rubric=process), ds)))
+```
+
+## Wrap a real agent
+
+If your agent is more than one LLM call, record the inputs the judge can blame.
+See [`examples/agentic_pipeline.py`](examples/agentic_pipeline.py).
 
 ```python
 from llm_judge import TraceRecorder, ModelSpec, Message, Role
@@ -116,34 +177,31 @@ rec = TraceRecorder(model=ModelSpec(name="my-agent", provider="openai"), case_id
 rec.set_static_prompt("responder", RESPONDER_PROMPT)
 rec.set_initial_context([Message(role=Role.USER, content=question)])
 
-state = {"question": question}
-with rec.step("retriever", state_before=state) as step:
-    step.retrieved_context = my_retriever(state["question"])
-    state = {**state, "context": step.retrieved_context}
-    step.state_after = state
-# ... more nodes ...
+with rec.step("retriever") as step:
+    step.retrieved_context = my_retriever(question)
+
 trace = rec.finish(final_output=answer)
 ```
 
-## Concepts
-
-- **`TestCase` / `Dataset`** — your inputs, optional gold `reference`, optional
-  pre-supplied `context`, plus `tags`/`metadata`. Load from `.jsonl`/`.json`/`.yaml`.
-- **`Target`** — the system-under-test. `SimpleTarget` (one LLM call), `FunctionTarget`
-  (wrap your code), or `EchoTarget` (offline demo). Produces a `Trace`.
-- **`Judge`** — `HeuristicJudge` (offline, lexical-overlap + rules) or `RubricJudge`
-  (LLM-as-a-judge, model-aware, attribution-first). Produces a `JudgeResult`.
-- **`recommend()`** — aggregates failures by attribution → ranked `Recommendation`s.
-- **`run_benchmark()` / `render()`** — orchestrate and print (text/markdown/json).
+Keep static prompts and retrieved context separate. That is how the judge
+chooses `static_prompt` vs `retrieval`.
 
 ## Judges
 
-| Judge | Needs a model? | Best for |
+| Judge | Needs a model? | Use when |
 | --- | --- | --- |
-| `heuristic` | No | Fast local loops, CI, plumbing checks |
-| `rubric` | Yes (any OpenAI-compatible) | Nuanced grading + rich attribution |
+| `heuristic` | No | Fast local loop. Keyword overlap against `{expected}`. Ignores your process. |
+| `rubric` | Optional | Happy path. Grades against **your** process. Picked automatically when `--rubric` is set. |
 
-Customize rubric criteria by passing `Criterion` objects to `RubricJudge`.
+## Providers
+
+The agent (target) and the judge are separate. They do not have to be the same model.
+
+| `provider` | Backend | Extra | Auth |
+| --- | --- | --- | --- |
+| `mock` (default) | offline | — | — |
+| `openai`, `vllm`, `ollama`, `local`, … | OpenAI-compatible | `pip install '.[openai]'` | `OPENAI_API_KEY`, `LLM_JUDGE_BASE_URL` |
+| `anthropic`, `claude`, `sonnet` | Anthropic | `pip install '.[anthropic]'` | `ANTHROPIC_API_KEY` |
 
 ## Tests
 
@@ -153,13 +211,6 @@ pytest
 ```
 
 All tests run offline.
-
-## Roadmap
-
-- More built-in judges (safety/toxicity via JudgeZoo-style adapters).
-- Reference-free faithfulness via NLI.
-- Prompt-optimization loop that proposes and A/B-tests prompt edits.
-- Dataset slicing / regression comparison between runs.
 
 ## License
 
