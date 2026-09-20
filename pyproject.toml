@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-judge"
+version = "0.1.0"
+description = "An easy, CLI-first harness for benchmarking LLM/agent output with LLM-as-a-judge."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "jrmcauliffe00" }]
+keywords = ["llm", "evaluation", "benchmark", "llm-as-a-judge", "rag", "agents"]
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+yaml = ["pyyaml>=6.0"]
+dev = ["pytest>=7.0", "pyyaml>=6.0"]
+all = ["openai>=1.0", "pyyaml>=6.0"]
+
+[project.scripts]
+llm-judge = "llm_judge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jrmcauliffe00/llm-judge"
+Repository = "https://github.com/jrmcauliffe00/llm-judge"
+
+[tool.setuptools.packages.find]
+include = ["llm_judge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
