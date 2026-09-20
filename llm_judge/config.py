@@ -50,6 +50,11 @@ class Config:
         )
     )
 
+    # Anthropic (Claude / Sonnet) API key.
+    anthropic_api_key: Optional[str] = field(
+        default_factory=lambda: _env("ANTHROPIC_API_KEY", "LLM_JUDGE_ANTHROPIC_API_KEY")
+    )
+
     request_timeout_s: float = field(
         default_factory=lambda: float(_env("LLM_JUDGE_TIMEOUT", default="60"))
     )

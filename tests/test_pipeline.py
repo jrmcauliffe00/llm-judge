@@ -137,6 +137,46 @@ def test_trace_recorder_captures_steps_and_state():
     assert trace.final_output == "done"
 
 
+def test_build_client_routes_by_provider():
+    from llm_judge.models import (
+        AnthropicClient,
+        MockClient,
+        OpenAIClient,
+        build_client,
+    )
+
+    assert isinstance(build_client(ModelSpec(name="x", provider="mock")), MockClient)
+    assert isinstance(
+        build_client(ModelSpec(name="claude-sonnet", provider="anthropic")),
+        AnthropicClient,
+    )
+    assert isinstance(
+        build_client(ModelSpec(name="gpt-4o", provider="openai")), OpenAIClient
+    )
+    # vLLM / Ollama etc. are just OpenAI-compatible.
+    assert isinstance(
+        build_client(ModelSpec(name="llama3", provider="ollama")), OpenAIClient
+    )
+
+
+def test_anthropic_message_split_is_provider_shaped():
+    # No network: just validate we reshape messages to Anthropic's format
+    # (system pulled out, tool folded into user).
+    from llm_judge.models.anthropic_client import AnthropicClient
+
+    msgs = [
+        Message(role=Role.SYSTEM, content="be terse"),
+        Message(role=Role.USER, content="hello"),
+        Message(role=Role.ASSISTANT, content="hi"),
+        Message(role=Role.TOOL, content="42", name="calc"),
+    ]
+    system, turns = AnthropicClient._split_messages(msgs)
+    assert system == "be terse"
+    assert turns[0] == {"role": "user", "content": "hello"}
+    assert turns[1] == {"role": "assistant", "content": "hi"}
+    assert turns[2]["role"] == "user" and "calc" in turns[2]["content"]
+
+
 def test_rubric_judge_offline_neutral_and_parsing():
     from llm_judge.judges.rubric import RubricJudge
     from llm_judge.models.mock import MockClient
